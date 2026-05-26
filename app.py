@@ -1,3 +1,4 @@
+# app.py
 
 import streamlit as st
 import pandas as pd
@@ -35,8 +36,8 @@ html, body, [class*="css"] {
 
 div.stButton > button {
     width:100%;
-    height:60px;
-    font-size:20px;
+    height:55px;
+    font-size:18px;
     border-radius:15px;
 }
 
@@ -78,7 +79,6 @@ div.stButton > button {
 os.makedirs("data/uploads", exist_ok=True)
 
 MASTER_FILE = "data/customers_master.csv"
-SCHEDULE_FILE = "data/schedules.csv"
 HISTORY_FILE = "data/history.csv"
 
 # =========================
@@ -86,6 +86,7 @@ HISTORY_FILE = "data/history.csv"
 # =========================
 
 if not os.path.exists(MASTER_FILE):
+
     pd.DataFrame(columns=[
         "고객ID",
         "고객명",
@@ -101,6 +102,7 @@ if not os.path.exists(MASTER_FILE):
     ]).to_csv(MASTER_FILE, index=False)
 
 if not os.path.exists(HISTORY_FILE):
+
     pd.DataFrame(columns=[
         "고객ID",
         "변경전날짜",
@@ -152,9 +154,14 @@ if selected == "오늘 일정":
         master_df["날짜"].astype(str) == today
     ]
 
+    today_sales = pd.to_numeric(
+        today_df["금액"],
+        errors="coerce"
+    ).fillna(0).sum()
+
     st.metric(
         "오늘 예상 매출",
-        f"{today_df['금액'].fillna(0).sum():,.0f} 원"
+        f"{today_sales:,.0f} 원"
     )
 
     if today_df.empty:
@@ -164,7 +171,9 @@ if selected == "오늘 일정":
 
         phone = str(row["전화번호"])
 
-        address_encoded = urllib.parse.quote(str(row["주소"]))
+        address_encoded = urllib.parse.quote(
+            str(row["주소"])
+        )
 
         naver_map = f"https://map.naver.com/v5/search/{address_encoded}"
 
@@ -178,6 +187,7 @@ if selected == "오늘 일정":
                 <p>🧹 {row['작업종류']}</p>
                 <p>💰 {row['금액']} 원</p>
                 <p>📌 상태: {row['상태']}</p>
+                <p>📝 {row['특이사항']}</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -202,7 +212,10 @@ if selected == "오늘 일정":
 
                 master_df.loc[idx, "상태"] = "완료"
 
-                master_df.to_csv(MASTER_FILE, index=False)
+                master_df.to_csv(
+                    MASTER_FILE,
+                    index=False
+                )
 
                 st.success("완료 처리됨")
                 st.rerun()
@@ -246,11 +259,18 @@ elif selected == "고객 관리":
             filtered_df["고객명"].astype(str).str.contains(search)
         ]
 
-    st.dataframe(filtered_df, use_container_width=True)
+    st.dataframe(
+        filtered_df,
+        use_container_width=True
+    )
 
     st.divider()
 
-    st.subheader("고객 일정 수정")
+    # =========================
+    # 고객 수정
+    # =========================
+
+    st.subheader("✏ 고객 일정 수정")
 
     if not filtered_df.empty:
 
@@ -302,16 +322,113 @@ elif selected == "고객 관리":
                 "변경시간": str(datetime.now())
             }
 
-            history_df.to_csv(HISTORY_FILE, index=False)
+            history_df.to_csv(
+                HISTORY_FILE,
+                index=False
+            )
 
             master_df.loc[row_idx, "날짜"] = str(new_date)
             master_df.loc[row_idx, "시간"] = new_time
             master_df.loc[row_idx, "상태"] = new_status
 
-            master_df.to_csv(MASTER_FILE, index=False)
+            master_df.to_csv(
+                MASTER_FILE,
+                index=False
+            )
 
             st.success("수정 완료")
             st.rerun()
+
+    st.divider()
+
+    # =========================
+    # 신규 고객 등록
+    # =========================
+
+    st.subheader("➕ 신규 고객 직접 등록")
+
+    with st.form("add_customer_form"):
+
+        new_name = st.text_input("고객명")
+
+        new_phone = st.text_input("전화번호")
+
+        new_address = st.text_input("주소")
+
+        new_ac = st.selectbox(
+            "에어컨 종류",
+            [
+                "벽걸이",
+                "스탠드",
+                "2in1",
+                "천장형",
+                "시스템"
+            ]
+        )
+
+        new_work = st.selectbox(
+            "작업 종류",
+            [
+                "분해청소",
+                "완전분해",
+                "가스충전",
+                "점검",
+                "기타"
+            ]
+        )
+
+        new_note = st.text_area("특이사항")
+
+        new_price = st.number_input(
+            "금액",
+            min_value=0,
+            step=10000
+        )
+
+        new_date = st.date_input("작업 날짜")
+
+        new_time = st.text_input(
+            "시간",
+            placeholder="예: 14:00"
+        )
+
+        submit = st.form_submit_button("고객 등록")
+
+        if submit:
+
+            customer_id = new_phone.replace("-", "")
+
+            # 중복 체크
+            if customer_id in master_df["고객ID"].astype(str).tolist():
+
+                st.error("이미 등록된 고객")
+
+            else:
+
+                new_row = {
+                    "고객ID": customer_id,
+                    "고객명": new_name,
+                    "전화번호": new_phone,
+                    "주소": new_address,
+                    "에어컨종류": new_ac,
+                    "작업종류": new_work,
+                    "특이사항": new_note,
+                    "금액": new_price,
+                    "상태": "일정확정",
+                    "날짜": str(new_date),
+                    "시간": new_time
+                }
+
+                master_df.loc[len(master_df)] = new_row
+
+                master_df.to_csv(
+                    MASTER_FILE,
+                    index=False
+                )
+
+                st.success("신규 고객 등록 완료")
+
+                st.rerun()
 
 # =========================
 # 매출
@@ -379,15 +496,21 @@ elif selected == "업로드":
 
         upload_df = pd.read_excel(uploaded_file)
 
-        st.write("업로드 데이터")
+        st.subheader("업로드 데이터")
 
-        st.dataframe(upload_df)
+        st.dataframe(
+            upload_df,
+            use_container_width=True
+        )
 
-        # 전화번호 기준 고객ID 생성
-        upload_df["고객ID"] = upload_df["전화번호"].astype(str).str.replace("-", "")
+        # 전화번호 기준 ID 생성
+        upload_df["고객ID"] = upload_df[
+            "전화번호"
+        ].astype(str).str.replace("-", "")
 
-        # 신규 고객 판별
-        existing_ids = master_df["고객ID"].astype(str).tolist()
+        existing_ids = master_df[
+            "고객ID"
+        ].astype(str).tolist()
 
         new_customers = upload_df[
             ~upload_df["고객ID"].astype(str).isin(existing_ids)
@@ -412,13 +535,19 @@ elif selected == "업로드":
                 ignore_index=True
             )
 
-            master_df.to_csv(MASTER_FILE, index=False)
+            master_df.to_csv(
+                MASTER_FILE,
+                index=False
+            )
 
             st.success(
                 f"{len(new_customers)}명 신규 고객 추가 완료"
             )
 
-            st.dataframe(new_customers)
+            st.dataframe(
+                new_customers,
+                use_container_width=True
+            )
 
 # =========================
 # 하단
@@ -426,4 +555,4 @@ elif selected == "업로드":
 
 st.divider()
 
-st.caption("에어케어 매니저 v1.0")
+st.caption("에어케어 매니저 v1.1")
