@@ -1,242 +1,429 @@
+
 import streamlit as st
 import pandas as pd
+import os
 from datetime import datetime
+from streamlit_option_menu import option_menu
+from streamlit_calendar import calendar
+import urllib.parse
+
+# =========================
+# 기본 설정
+# =========================
 
 st.set_page_config(
-    page_title="에어컨 일정관리",
-    layout="wide"
+    page_title="에어케어 매니저",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# ------------------
-# 사이드 메뉴
-# ------------------
-menu = st.sidebar.radio(
-    "메뉴",
-    [
-        "대시보드",
-        "업체 엑셀 업로드",
-        "오늘 일정",
-        "캘린더",
-        "고객관리",
-        "동선표",
-        "매출관리"
-    ]
-)
+# =========================
+# CSS
+# =========================
 
-# ------------------
-# 세션 데이터
-# ------------------
-if "customers" not in st.session_state:
-    st.session_state.customers = pd.DataFrame(columns=[
+st.markdown("""
+<style>
+
+html, body, [class*="css"] {
+    font-size:18px;
+}
+
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 5rem;
+}
+
+div.stButton > button {
+    width:100%;
+    height:60px;
+    font-size:20px;
+    border-radius:15px;
+}
+
+.card {
+    padding:20px;
+    border-radius:20px;
+    margin-bottom:15px;
+    background-color:#f7f7f7;
+    box-shadow:0 2px 10px rgba(0,0,0,0.1);
+}
+
+.status-연락전 {
+    border-left:10px solid gray;
+}
+
+.status-통화완료 {
+    border-left:10px solid orange;
+}
+
+.status-일정확정 {
+    border-left:10px solid blue;
+}
+
+.status-완료 {
+    border-left:10px solid green;
+}
+
+.status-취소 {
+    border-left:10px solid red;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# 폴더 생성
+# =========================
+
+os.makedirs("data/uploads", exist_ok=True)
+
+MASTER_FILE = "data/customers_master.csv"
+SCHEDULE_FILE = "data/schedules.csv"
+HISTORY_FILE = "data/history.csv"
+
+# =========================
+# 초기 파일 생성
+# =========================
+
+if not os.path.exists(MASTER_FILE):
+    pd.DataFrame(columns=[
+        "고객ID",
         "고객명",
         "전화번호",
         "주소",
+        "에어컨종류",
         "작업종류",
-        "날짜",
-        "시간",
+        "특이사항",
         "금액",
         "상태",
-        "특이사항"
-    ])
+        "날짜",
+        "시간"
+    ]).to_csv(MASTER_FILE, index=False)
 
-# ------------------
-# 대시보드
-# ------------------
-if menu == "대시보드":
+if not os.path.exists(HISTORY_FILE):
+    pd.DataFrame(columns=[
+        "고객ID",
+        "변경전날짜",
+        "변경후날짜",
+        "변경시간"
+    ]).to_csv(HISTORY_FILE, index=False)
 
-    st.title("에어컨 청소 일정관리")
+# =========================
+# 데이터 로드
+# =========================
 
-    total = len(st.session_state.customers)
+master_df = pd.read_csv(MASTER_FILE)
+history_df = pd.read_csv(HISTORY_FILE)
 
-    today = datetime.today().strftime("%Y-%m-%d")
+# =========================
+# 메뉴
+# =========================
 
-    today_count = len(
-        st.session_state.customers[
-            st.session_state.customers["날짜"] == today
-        ]
+selected = option_menu(
+    menu_title=None,
+    options=[
+        "오늘 일정",
+        "캘린더",
+        "고객 관리",
+        "매출",
+        "업로드"
+    ],
+    icons=[
+        "house",
+        "calendar",
+        "people",
+        "cash",
+        "upload"
+    ],
+    orientation="horizontal"
+)
+
+# =========================
+# 오늘 일정
+# =========================
+
+if selected == "오늘 일정":
+
+    st.title("📅 오늘 일정")
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    today_df = master_df[
+        master_df["날짜"].astype(str) == today
+    ]
+
+    st.metric(
+        "오늘 예상 매출",
+        f"{today_df['금액'].fillna(0).sum():,.0f} 원"
     )
 
-    done_count = len(
-        st.session_state.customers[
-            st.session_state.customers["상태"] == "완료"
+    if today_df.empty:
+        st.info("오늘 일정 없음")
+
+    for idx, row in today_df.iterrows():
+
+        phone = str(row["전화번호"])
+
+        address_encoded = urllib.parse.quote(str(row["주소"]))
+
+        naver_map = f"https://map.naver.com/v5/search/{address_encoded}"
+
+        st.markdown(
+            f"""
+            <div class="card status-{row['상태']}">
+                <h3>{row['시간']} - {row['고객명']}</h3>
+                <p>📍 {row['주소']}</p>
+                <p>📞 {row['전화번호']}</p>
+                <p>❄ {row['에어컨종류']}</p>
+                <p>🧹 {row['작업종류']}</p>
+                <p>💰 {row['금액']} 원</p>
+                <p>📌 상태: {row['상태']}</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.link_button(
+                "📞 전화",
+                f"tel:{phone}"
+            )
+
+        with col2:
+            st.link_button(
+                "🗺 지도",
+                naver_map
+            )
+
+        with col3:
+            if st.button("✅ 완료", key=f"done_{idx}"):
+
+                master_df.loc[idx, "상태"] = "완료"
+
+                master_df.to_csv(MASTER_FILE, index=False)
+
+                st.success("완료 처리됨")
+                st.rerun()
+
+# =========================
+# 캘린더
+# =========================
+
+elif selected == "캘린더":
+
+    st.title("🗓 일정 캘린더")
+
+    events = []
+
+    for _, row in master_df.iterrows():
+
+        if pd.notna(row["날짜"]):
+
+            events.append({
+                "title": f"{row['고객명']} ({row['시간']})",
+                "start": row["날짜"]
+            })
+
+    calendar(events=events)
+
+# =========================
+# 고객 관리
+# =========================
+
+elif selected == "고객 관리":
+
+    st.title("👥 고객 관리")
+
+    search = st.text_input("고객 검색")
+
+    filtered_df = master_df.copy()
+
+    if search:
+
+        filtered_df = filtered_df[
+            filtered_df["고객명"].astype(str).str.contains(search)
         ]
-    )
 
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("전체 고객", total)
-    col2.metric("오늘 일정", today_count)
-    col3.metric("완료", done_count)
+    st.dataframe(filtered_df, use_container_width=True)
 
     st.divider()
 
-    st.subheader("최근 일정")
-    st.dataframe(st.session_state.customers.tail(10), use_container_width=True)
+    st.subheader("고객 일정 수정")
 
-# ------------------
-# 엑셀 업로드
-# ------------------
-elif menu == "업체 엑셀 업로드":
+    if not filtered_df.empty:
 
-    st.title("업체 엑셀 업로드")
-
-    uploaded = st.file_uploader(
-        "엑셀 파일 업로드",
-        type=["xlsx", "xls"]
-    )
-
-    if uploaded:
-
-        try:
-            xls = pd.ExcelFile(uploaded)
-
-            st.success("엑셀 읽기 성공")
-
-            st.write("시트 목록")
-            st.write(xls.sheet_names)
-
-            selected_sheet = st.selectbox(
-                "시트 선택",
-                xls.sheet_names
-            )
-
-            df = pd.read_excel(uploaded, sheet_name=selected_sheet)
-
-            st.subheader("원본 데이터")
-            st.dataframe(df, use_container_width=True)
-
-            st.divider()
-
-            st.subheader("고객 데이터 등록")
-
-            customer_name = st.text_input("고객명 컬럼명")
-            phone_col = st.text_input("전화번호 컬럼명")
-            address_col = st.text_input("주소 컬럼명")
-
-            if st.button("고객 리스트 생성"):
-
-                try:
-
-                    new_df = pd.DataFrame({
-                        "고객명": df[customer_name],
-                        "전화번호": df[phone_col],
-                        "주소": df[address_col],
-                        "작업종류": "미정",
-                        "날짜": "",
-                        "시간": "",
-                        "금액": 0,
-                        "상태": "연락전",
-                        "특이사항": ""
-                    })
-
-                    st.session_state.customers = pd.concat([
-                        st.session_state.customers,
-                        new_df
-                    ]).drop_duplicates()
-
-                    st.success("고객 등록 완료")
-
-                except Exception as e:
-                    st.error(e)
-
-        except Exception as e:
-            st.error(e)
-
-# ------------------
-# 오늘 일정
-# ------------------
-elif menu == "오늘 일정":
-
-    st.title("오늘 일정")
-
-    today = datetime.today().strftime("%Y-%m-%d")
-
-    today_df = st.session_state.customers[
-        st.session_state.customers["날짜"] == today
-    ]
-
-    st.dataframe(today_df, use_container_width=True)
-
-# ------------------
-# 캘린더
-# ------------------
-elif menu == "캘린더":
-
-    st.title("날짜별 일정")
-
-    selected_date = st.date_input("날짜 선택")
-
-    filtered = st.session_state.customers[
-        st.session_state.customers["날짜"] == str(selected_date)
-    ]
-
-    st.subheader(f"{selected_date} 일정")
-
-    st.dataframe(filtered, use_container_width=True)
-
-# ------------------
-# 고객관리
-# ------------------
-elif menu == "고객관리":
-
-    st.title("고객관리")
-
-    df = st.session_state.customers
-
-    st.data_editor(
-        df,
-        use_container_width=True,
-        num_rows="dynamic"
-    )
-
-# ------------------
-# 동선표
-# ------------------
-elif menu == "동선표":
-
-    st.title("하루 동선표")
-
-    selected_date = st.date_input("동선 날짜")
-
-    route_df = st.session_state.customers[
-        st.session_state.customers["날짜"] == str(selected_date)
-    ]
-
-    st.subheader("방문 순서")
-
-    for i, row in route_df.iterrows():
-
-        st.info(
-            f"{row['시간']} - {row['주소']} ({row['고객명']})"
+        customer = st.selectbox(
+            "고객 선택",
+            filtered_df["고객명"].tolist()
         )
 
-# ------------------
-# 매출관리
-# ------------------
-elif menu == "매출관리":
+        row_idx = filtered_df[
+            filtered_df["고객명"] == customer
+        ].index[0]
 
-    st.title("매출관리")
+        row = master_df.loc[row_idx]
 
-    df = st.session_state.customers.copy()
+        new_date = st.date_input(
+            "날짜",
+            value=pd.to_datetime(row["날짜"])
+        )
 
-    df["금액"] = pd.to_numeric(df["금액"], errors="coerce").fillna(0)
+        new_time = st.text_input(
+            "시간",
+            value=str(row["시간"])
+        )
 
-    today = datetime.today().strftime("%Y-%m-%d")
+        new_status = st.selectbox(
+            "상태",
+            [
+                "연락전",
+                "통화완료",
+                "일정확정",
+                "완료",
+                "취소"
+            ],
+            index=[
+                "연락전",
+                "통화완료",
+                "일정확정",
+                "완료",
+                "취소"
+            ].index(row["상태"])
+        )
 
-    today_sales = df[df["날짜"] == today]["금액"].sum()
+        if st.button("수정 저장"):
 
-    month_sales = df["금액"].sum()
+            history_df.loc[len(history_df)] = {
+                "고객ID": row["고객ID"],
+                "변경전날짜": row["날짜"],
+                "변경후날짜": str(new_date),
+                "변경시간": str(datetime.now())
+            }
+
+            history_df.to_csv(HISTORY_FILE, index=False)
+
+            master_df.loc[row_idx, "날짜"] = str(new_date)
+            master_df.loc[row_idx, "시간"] = new_time
+            master_df.loc[row_idx, "상태"] = new_status
+
+            master_df.to_csv(MASTER_FILE, index=False)
+
+            st.success("수정 완료")
+            st.rerun()
+
+# =========================
+# 매출
+# =========================
+
+elif selected == "매출":
+
+    st.title("💰 매출 통계")
+
+    master_df["금액"] = pd.to_numeric(
+        master_df["금액"],
+        errors="coerce"
+    ).fillna(0)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    today_sales = master_df[
+        master_df["날짜"].astype(str) == today
+    ]["금액"].sum()
+
+    current_month = datetime.now().strftime("%Y-%m")
+
+    month_df = master_df[
+        master_df["날짜"].astype(str).str.startswith(current_month)
+    ]
+
+    month_sales = month_df["금액"].sum()
 
     col1, col2 = st.columns(2)
 
-    col1.metric("오늘 매출", f"{today_sales:,.0f}원")
-    col2.metric("전체 매출", f"{month_sales:,.0f}원")
+    with col1:
+        st.metric(
+            "오늘 매출",
+            f"{today_sales:,.0f} 원"
+        )
 
-    st.divider()
+    with col2:
+        st.metric(
+            "이번달 매출",
+            f"{month_sales:,.0f} 원"
+        )
 
-    st.subheader("작업별 통계")
+    st.subheader("작업 종류별 매출")
 
-    st.dataframe(
-        df.groupby("작업종류")["금액"].sum().reset_index(),
-        use_container_width=True
+    type_sales = master_df.groupby(
+        "작업종류"
+    )["금액"].sum()
+
+    st.bar_chart(type_sales)
+
+# =========================
+# 업로드
+# =========================
+
+elif selected == "업로드":
+
+    st.title("📤 업체 엑셀 업로드")
+
+    uploaded_file = st.file_uploader(
+        "엑셀 업로드",
+        type=["xlsx"]
     )
+
+    if uploaded_file:
+
+        upload_df = pd.read_excel(uploaded_file)
+
+        st.write("업로드 데이터")
+
+        st.dataframe(upload_df)
+
+        # 전화번호 기준 고객ID 생성
+        upload_df["고객ID"] = upload_df["전화번호"].astype(str).str.replace("-", "")
+
+        # 신규 고객 판별
+        existing_ids = master_df["고객ID"].astype(str).tolist()
+
+        new_customers = upload_df[
+            ~upload_df["고객ID"].astype(str).isin(existing_ids)
+        ]
+
+        if new_customers.empty:
+
+            st.warning("신규 고객 없음")
+
+        else:
+
+            new_customers["상태"] = "연락전"
+
+            if "날짜" not in new_customers.columns:
+                new_customers["날짜"] = ""
+
+            if "시간" not in new_customers.columns:
+                new_customers["시간"] = ""
+
+            master_df = pd.concat(
+                [master_df, new_customers],
+                ignore_index=True
+            )
+
+            master_df.to_csv(MASTER_FILE, index=False)
+
+            st.success(
+                f"{len(new_customers)}명 신규 고객 추가 완료"
+            )
+
+            st.dataframe(new_customers)
+
+# =========================
+# 하단
+# =========================
+
+st.divider()
+
+st.caption("에어케어 매니저 v1.0")
